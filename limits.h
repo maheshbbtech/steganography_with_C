@@ -1,0 +1,4 @@
+#define MAX_IMG_SIZE 0x1000000
+#define MAX_TXT_LEN 1024U
+#define MIN_PASS_LEN 8U
+#define MAX_PASS_LEN 16U

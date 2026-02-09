@@ -9,95 +9,49 @@
 #include "stegno_interface.h"
 
 
-char* encrypt_pass(const char* password) {
-    const char *xor_key = "maheshbaero";
-    const char *and_key = "Knight64";
-    const char *or_key  = "VishyAnand";
 
-    size_t pass_len = strlen(password);
-    size_t max_len = 16;  // Limit key to 16 characters
 
-    // Allocate memory for encrypted key (plus null terminator)
-    char *encrypted = (char *)malloc(max_len + 1);
-    if (encrypted == NULL) return NULL;
+#include "crypto.h"
 
-    for (size_t i = 0; i < max_len; ++i) {
-        unsigned char ch = (i < pass_len) ? password[i] : 0;
+int encode_msg(FILE *img_file, const char *message, const char *password) {
+    if (!img_file || !message || !password) return 1;
 
-        // Step 1: XOR with "maheshbaero"
-        if (i < strlen(xor_key))
-            ch ^= xor_key[i];
+    // --- Step 0: Encrypt Message ---
+    unsigned char key[32]; // 256 bits
+    derive_key(password, key);
 
-        // Step 2: AND with "Knight64"
-        if (i < strlen(and_key))
-            ch &= and_key[i];
-
-        // Step 3: OR with "VishyAnand"
-        if (i < strlen(or_key))
-            ch |= or_key[i];
-
-        encrypted[i] = ch;
+    unsigned char *ciphertext = NULL;
+    int ciphertext_len = encrypt_aes256(message, strlen(message), key, &ciphertext);
+    if (ciphertext_len < 0) {
+        printf("Encryption failed.\n");
+        return 1;
     }
-
-    encrypted[max_len] = '\0';  // Null terminate
-    return encrypted;
-}
-
-char* encrypt_msg(FILE *txt_file, const char *key) {
-    if (!txt_file || !key) return NULL;
-
-    const char *xor_string = "ababababaa";
-    size_t key_len = strlen(key);
-    size_t xor_len = strlen(xor_string);
-
-    size_t max_len = 1024U * 10U;
-    char *gibrish = (char *)malloc(max_len);
-    if (!gibrish) return NULL;
-
-    size_t i = 0;
-    int ch;
-    while ((ch = fgetc(txt_file)) != EOF && i < max_len) {
-        unsigned char byte = (unsigned char)ch;
-
-        byte ^= key[i % key_len];               // Step 1: XOR with key
-        byte ^= xor_string[i % xor_len];        // Step 2: XOR with "ababababaa"
-
-        gibrish[i++] = byte;
-    }
-
-    if (i < max_len)
-        gibrish[i] = '\0';
-
-    return gibrish;
-}
-
-int encode_msg(FILE *img_file, const char *gibrish) {
-    if (!img_file || !gibrish) return 1;
 
     fseek(img_file, 0, SEEK_SET);  // Start at beginning of image
 
-    size_t msg_len = strlen(gibrish);
-    if (msg_len > 65535) {  // Because we’re storing length in 2 bytes (16 bits)
-        printf("Gibrish text too long to encode.\n");
+    if (ciphertext_len > 65535) {
+        printf("Message text too long to encode.\n");
+        free(ciphertext);
         return 1;
     }
 
     unsigned char img_byte;
 
-    // --- Step 1: Encode message length (2 bytes = 16 bits) ---
+    // --- Step 1: Encode ciphertext length (2 bytes = 16 bits) ---
     for (int bit = 15; bit >= 0; --bit) {
-        if (fread(&img_byte, 1, 1, img_file) != 1) return 1;
-        img_byte = (img_byte & 0xFE) | ((msg_len >> bit) & 1);
+        if (fread(&img_byte, 1, 1, img_file) != 1) {free(ciphertext); return 1;}
+        img_byte = (img_byte & 0xFE) | ((ciphertext_len >> bit) & 1);
         fseek(img_file, -1, SEEK_CUR);
         fwrite(&img_byte, 1, 1, img_file);
     }
 
-    // --- Step 2: Encode the gibrish message ---
-    for (size_t i = 0; i < msg_len; ++i) {
-        unsigned char ch = gibrish[i];
+    // --- Step 2: Encode the ciphertext ---
+    for (int i = 0; i < ciphertext_len; ++i) {
+        unsigned char ch = ciphertext[i];
         for (int bit = 7; bit >= 0; --bit) {
             if (fread(&img_byte, 1, 1, img_file) != 1) {
                 printf("Image too small to encode message.\n");
+                free(ciphertext);
                 return 1;
             }
             img_byte = (img_byte & 0xFE) | ((ch >> bit) & 1);
@@ -105,6 +59,8 @@ int encode_msg(FILE *img_file, const char *gibrish) {
             fwrite(&img_byte, 1, 1, img_file);
         }
     }
+    
+    free(ciphertext);
 
     // --- Step 3: Encode "Mikhail" signature at the END of the image ---
     const char *signature = "Mikhail";

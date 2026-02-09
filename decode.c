@@ -8,7 +8,9 @@
 #include "error.h"
 #include "stegno_interface.h"
 
-char *decode_msg(FILE *img_file) {
+#include "crypto.h"
+
+char *decode_msg(FILE *img_file, const char *password) {
     fseek(img_file, 0, SEEK_END);
     long img_size = ftell(img_file);
 
@@ -34,83 +36,54 @@ char *decode_msg(FILE *img_file) {
         }
     }
 
-    // --- Step 2: Extract length of gibrish (first 16 bits) ---
+    // --- Step 2: Extract length of ciphertext (first 16 bits) ---
     fseek(img_file, 0, SEEK_SET);
-    unsigned short gibrish_len = 0;
+    unsigned short msg_len = 0;
 
     for (int bit = 15; bit >= 0; --bit) {
         unsigned char img_byte;
         if (fread(&img_byte, 1, 1, img_file) != 1) return NULL;
-        gibrish_len = (gibrish_len << 1) | (img_byte & 1);
+        msg_len = (msg_len << 1) | (img_byte & 1);
     }
 
-    if (gibrish_len == 0 || gibrish_len > 10240) {
-        printf("Invalid message length.\n");
+    if (msg_len == 0 || msg_len > 10240) { // Limit sanity check
+        printf("Invalid message length: %d\n", msg_len);
         return NULL;
     }
 
-    // --- Step 3: Decode gibrish text ---
-    char *gibrish = malloc(gibrish_len + 1);
-    if (gibrish == NULL) {
+    // --- Step 3: Extract ciphertext ---
+    unsigned char *ciphertext = malloc(msg_len);
+    if (ciphertext == NULL) {
         printf("Memory allocation failed.\n");
         return NULL;
     }
 
-    for (int i = 0; i < gibrish_len; ++i) {
+    for (int i = 0; i < msg_len; ++i) {
         unsigned char ch = 0;
         for (int bit = 7; bit >= 0; --bit) {
             unsigned char img_byte;
             if (fread(&img_byte, 1, 1, img_file) != 1) {
-                free(gibrish);
+                free(ciphertext);
                 return NULL;
             }
             ch = (ch << 1) | (img_byte & 1);
         }
-        gibrish[i] = ch;
+        ciphertext[i] = ch;
     }
 
-    gibrish[gibrish_len] = '\0';
-    return gibrish;
-}
+    // --- Step 4: Decrypt ---
+    unsigned char key[32]; // 256 bits
+    derive_key(password, key);
 
-char* decrypt_msg(const char *cipher_txt, const char *key, const char *output_filename) {
-    if (!cipher_txt || !key || !output_filename) return NULL;
+    char *plaintext = decrypt_aes256(ciphertext, msg_len, key);
+    free(ciphertext);
 
-    const char *xor_string = "ababababaa";
-    size_t key_len = strlen(key);
-    size_t xor_len = strlen(xor_string);
-
-    FILE *out_file = fopen(output_filename, "w");
-    if (!out_file) {
-        perror("Failed to open output file for writing");
+    if (plaintext == NULL) {
+        printf("Decryption failed (wrong password?)\n");
         return NULL;
     }
 
-    size_t i = 0;
-    char ch;
-    while ((ch = cipher_txt[i]) != '\0') {
-        unsigned char byte = (unsigned char)ch;
-
-        byte ^= xor_string[i % xor_len];        // Reverse Step 2
-        byte ^= key[i % key_len];               // Reverse Step 1
-
-        fputc(byte, out_file);
-        i++;
-    }
-
-    fclose(out_file);
-
-    // Optional: also return the plain text
-    char *plain_txt = (char *)malloc(i + 1);
-    if (!plain_txt) return NULL;
-
-    for (size_t j = 0; j < i; ++j) {
-        unsigned char byte = (unsigned char)cipher_txt[j];
-        byte ^= xor_string[j % xor_len];
-        byte ^= key[j % key_len];
-        plain_txt[j] = byte;
-    }
-    plain_txt[i] = '\0';
-
-    return plain_txt;
+    return plaintext;
 }
+
+

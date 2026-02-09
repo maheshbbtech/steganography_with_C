@@ -12,12 +12,10 @@ int main(int argc, char *argv[]) {
 
     FILE *img_file;
     FILE *txt_file;
-    int pass_len;
-    char *cipher_txt = malloc(1024U * 10U);
-    char *plain_txt = malloc(1024U * 10U);
-    char *key = malloc(16U);
+    char *message = malloc(1024U * 10U);
 
     if (argc != 5) {
+        printf("Usage: %s <E/D> <Source Image> <Output/Input Text File> <Password>\n", argv[0]);
         return 1;
     }
 
@@ -25,13 +23,17 @@ int main(int argc, char *argv[]) {
         strcmp(argv[1], "E") != 0 &&
         strcmp(argv[1], "e") != 0 &&
         strcmp(argv[1], "D") != 0 &&
-        strcmp(argv[1], "d") != 0
+        strcmp(argv[1], "d") != 0 &&
+        strcmp(argv[1], "-E") != 0 &&
+        strcmp(argv[1], "-e") != 0 &&
+        strcmp(argv[1], "-D") != 0 &&
+        strcmp(argv[1], "-d") != 0
     ) {
         printf("select enc or dec\n");
         return INVALID_NUM_ARGS;
     }
 
-    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0) {
+    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0 || strcmp(argv[1], "-E") == 0 || strcmp(argv[1], "-e") == 0) {
         txt_file = fopen(argv[3], "r");
         if (txt_file == NULL) {
             printf("failed to open/create .txt file: %s\n", argv[3]);
@@ -59,7 +61,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0) {
+    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0 || strcmp(argv[1], "-E") == 0 || strcmp(argv[1], "-e") == 0) {
         if (validate_txt_file(txt_file) != 0) {
             printf("txt validation failed\n");
             fclose(img_file);
@@ -80,25 +82,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    pass_len = strlen(argv[4]);
-    if (pass_len < MIN_PASS_LEN || pass_len > MAX_PASS_LEN) {
-        printf("invalid password lenght\n");
-        return INVALID_PASS_LEN;
-    }
-    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0) {
-        key = encrypt_pass(argv[4]);
-        if (key == NULL) {
-            printf("failed to encrypt password\n");
-            return 1;
+    // Encoding Flow
+    if (strcmp(argv[1], "E") == 0 || strcmp(argv[1], "e") == 0 || strcmp(argv[1], "-E") == 0 || strcmp(argv[1], "-e") == 0) {
+        // Read text file into message buffer
+        size_t i = 0;
+        int ch;
+        while ((ch = fgetc(txt_file)) != EOF && i < (1024U * 10U)) {
+            message[i++] = (char)ch;
         }
-
-        cipher_txt = encrypt_msg(txt_file, key);
-        if (cipher_txt == NULL) {
-            printf("Failed to encrypt message\n");
-            return EXIT_FAILURE;
-        }
+        message[i] = '\0';
         
-        int encode_status = encode_msg(img_file, cipher_txt);
+        // Pass password (argv[4])
+        int encode_status = encode_msg(img_file, message, argv[4]);
         if (encode_status != 0) {
             printf("encode failed\n");
             return EXIT_FAILURE;
@@ -106,28 +101,25 @@ int main(int argc, char *argv[]) {
             printf("encoded successfully\n");
             return EXIT_SUCCESS;
         }
-    } else {
-        cipher_txt = decode_msg(img_file);
-        if (cipher_txt == NULL) {
+    } 
+    // Decoding Flow
+    else {
+        free(message); // Free the initially allocated buffer, decode_msg allocates its own
+        
+        // Pass password (argv[4])
+        message = decode_msg(img_file, argv[4]);
+        if (message == NULL) {
             printf("decode failed\n");
             return EXIT_FAILURE;
         }
-        key = encrypt_pass(argv[4]);
-        if (key == NULL) {
-            printf("Failed to decrypt password\n");
-            return EXIT_FAILURE;
-        }
-        plain_txt = decrypt_msg(cipher_txt, key, argv[3]);
-        if (plain_txt == NULL) {
-            printf("Decrypt failed\n");
-            return EXIT_FAILURE;
-        } else {
-            printf("success\n");
-        }
+        
+        fprintf(txt_file, "%s", message);
+        printf("success\n");
     }
     
 
     fclose(img_file);
     fclose(txt_file);
+
     return 0;
 }
